@@ -784,9 +784,18 @@ export default function App() {
     if (loading || isRecording) return;
     // Use Android native speech recognition via AndroidTutor bridge
     if (window.AndroidTutor && window.AndroidTutor.sttStart) {
+      // Check permission first — if not granted, sttStart will request it
+      // and re-launch speech recognition after user grants
       try {
-        window.AndroidTutor.sttStart("stt_cb_1");
-        setIsRecording(true);
+        if (window.AndroidTutor.sttHasPermission && window.AndroidTutor.sttHasPermission()) {
+          window.AndroidTutor.sttStart("stt_cb_1");
+          setIsRecording(true);
+        } else {
+          // Request permission — sttStart will be called after grant in onRequestPermissionsResult
+          // Show recording state while permission dialog is up
+          setIsRecording(true);
+          window.AndroidTutor.sttRequestPermission();
+        }
       } catch (e) {
         console.error("STT start error:", e);
         setIsRecording(false);
@@ -824,9 +833,8 @@ export default function App() {
 
   const stopRecording = () => {
     recognitionRef.current?.stop();
-    if (window.AndroidTutor && window.AndroidTutor.sttStop) {
-      try { window.AndroidTutor.sttStop(); } catch (e) {}
-    }
+    // Note: Android SpeechRecognizer has no stop method — it auto-stops on silence
+    // No AndroidTutor.sttStop() call needed
     setIsRecording(false);
   };
 
@@ -853,6 +861,11 @@ export default function App() {
     if (!text || !text.trim()) return;
     // Use Android native TTS via AndroidTutor bridge
     if (window.AndroidTutor && window.AndroidTutor.ttsSpeak) {
+      // Check TTS is initialized before speaking
+      if (window.AndroidTutor.ttsIsReady && !window.AndroidTutor.ttsIsReady()) {
+        console.warn("TTS not ready yet");
+        return;
+      }
       try {
         window.AndroidTutor.ttsSpeak(text);
       } catch (e) {
