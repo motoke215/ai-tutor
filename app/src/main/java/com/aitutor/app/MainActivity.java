@@ -168,20 +168,19 @@ public class MainActivity extends AppCompatActivity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_SPEECH_RECOGNITION) {
+            pendingSpeechCallback = null;
+            if (webView == null || isFinishing()) return;
             if (resultCode == RESULT_OK && data != null) {
-                ArrayList<String> results = data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS);
+                ArrayList<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
                 if (results != null && results.size() > 0) {
                     String recognizedText = results.get(0);
-                    String callbackFunc = pendingSpeechCallback != null ? pendingSpeechCallback : "onSpeechRecognitionResult";
-                    String js = "if (typeof window." + callbackFunc + " === 'function') { window." + callbackFunc + "('" + recognizedText.replace("'", "\\'") + "'); }";
-                    webView.evaluateJavascript(js, null);
+                    final String js = "if (typeof window.onSpeechRecognitionResult === 'function') { window.onSpeechRecognitionResult('" + recognizedText.replace("'", "\\'") + "'); } else { console.log('Callback onSpeechRecognitionResult not found'); }";
+                    webView.post(() -> webView.evaluateJavascript(js, null));
                 }
             } else {
-                String callbackFunc = pendingSpeechCallback != null ? pendingSpeechCallback : "onSpeechRecognitionResult";
-                String js = "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('no_result'); }";
-                webView.evaluateJavascript(js, null);
+                final String js = "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('no_result'); }";
+                webView.post(() -> webView.evaluateJavascript(js, null));
             }
-            pendingSpeechCallback = null;
         }
     }
 
