@@ -637,11 +637,17 @@ export default function App() {
   const [showModelConfig, setShowModelConfig] = useState(false);
   const [sessionStats, setSessionStats] = useState({ turns: 0, startTime: null });
 
-  // Model config state
-  const [selectedProvider, setSelectedProvider] = useState("deepseek");
-  const [selectedModel, setSelectedModel] = useState("deepseek-chat");
-  const [apiKeys, setApiKeys] = useState({});
-  const [customBaseUrl, setCustomBaseUrl] = useState({});
+  // Model config state — load from localStorage for persistence
+  const [selectedProvider, setSelectedProvider] = useState(() => localStorage.getItem("aitutor_provider") || "deepseek");
+  const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem("aitutor_model") || "deepseek-chat");
+  const [apiKeys, setApiKeys] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("aitutor_apikeys") || "{}"); }
+    catch { return {}; }
+  });
+  const [customBaseUrl, setCustomBaseUrl] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("aitutor_baseurl") || "{}"); }
+    catch { return {}; }
+  });
   const [showModelDropdown, setShowModelDropdown] = useState({});
   const [lastInputWasVoice, setLastInputWasVoice] = useState(false);
 
@@ -660,6 +666,12 @@ export default function App() {
     setVoiceSupported((hasSpeech && hasSynth) || hasNativeSpeech);
     if (hasSynth) synthRef.current = window.speechSynthesis;
   }, []);
+
+  // Persist model config to localStorage
+  useEffect(() => { localStorage.setItem("aitutor_provider", selectedProvider); }, [selectedProvider]);
+  useEffect(() => { localStorage.setItem("aitutor_model", selectedModel); }, [selectedModel]);
+  useEffect(() => { localStorage.setItem("aitutor_apikeys", JSON.stringify(apiKeys)); }, [apiKeys]);
+  useEffect(() => { localStorage.setItem("aitutor_baseurl", JSON.stringify(customBaseUrl)); }, [customBaseUrl]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
