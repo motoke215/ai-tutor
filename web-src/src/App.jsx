@@ -1284,38 +1284,45 @@ export default function App() {
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-          {/* Voice mic button */}
-          {voiceSupported && voiceEnabled && (
+        {/* ── Voice mode: large hold-to-speak button ── */}
+        {voiceSupported && voiceEnabled ? (
+          <div style={{ textAlign: "center" }}>
             <button
-              onClick={isRecording ? stopRecording : startRecording}
+              onTouchStart={e => { e.preventDefault(); if (!loading) startRecording(); }}
+              onTouchEnd={e => { e.preventDefault(); if (isRecording) stopRecording(); }}
+              onMouseDown={e => { e.preventDefault(); if (!loading) startRecording(); }}
+              onMouseUp={e => { e.preventDefault(); if (isRecording) stopRecording(); }}
               disabled={loading}
               style={{
-                width: 44, height: 44, borderRadius: "50%", border: "none",
-                background: isRecording ? "#f87171" : T.surface,
-                border: `1px solid ${isRecording ? "#f87171" : T.border}`,
-                color: isRecording ? "#fff" : T.textMuted,
+                width: "100%", height: 64, borderRadius: 32,
+                background: isRecording
+                  ? "linear-gradient(135deg, #f87171, #ef4444)"
+                  : `linear-gradient(135deg, ${T.accent}22, ${T.accentDim}22)`,
+                border: `2px solid ${isRecording ? "#f87171" : T.accent + "88"}`,
+                color: isRecording ? "#fff" : T.accent,
+                fontSize: 18, fontWeight: 700, fontFamily: "inherit",
                 cursor: loading ? "not-allowed" : "pointer",
-                fontSize: 18, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                animation: isRecording ? "recordPulse 1.5s infinite" : "none",
-                transition: "all 0.2s",
+                letterSpacing: 3,
+                transition: "all 0.15s",
+                boxShadow: isRecording ? "0 0 30px rgba(248,113,113,0.4)" : `0 0 24px ${T.accentGlow}`,
               }}
-              title={isRecording ? "停止录音 (点击发送)" : `语音输入 (${teacher.lang === 'en-US' ? '英语' : '中文'})`}>
-              {isRecording ? "⏹" : "🎙"}
+            >
+              {isRecording ? "⏹ 松开发送" : "🎙 按住说话"}
             </button>
-          )}
-          {/* Textarea */}
+          </div>
+        ) : (
+        /* ── Text mode: textarea + send button ── */
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
           <textarea
             ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
             disabled={loading}
-            placeholder={voiceEnabled && !isRecording ? "可以直接说话，或打字输入… (Enter发送)" : "输入你的回答或问题… (Enter发送，Shift+Enter换行)"}
+            placeholder="输入你的回答或问题… (Enter发送，Shift+Enter换行)"
             rows={1}
             style={{ flex: 1, background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 12, padding: "12px 14px", color: T.text, fontSize: 14, lineHeight: 1.5, resize: "none", fontFamily: "inherit", transition: "border-color 0.2s", minHeight: 46, maxHeight: 120, boxShadow: "none" }}
           />
-          {/* Send button */}
           <button
             onClick={() => handleSend()}
             disabled={loading || !input.trim()}
@@ -1330,30 +1337,6 @@ export default function App() {
             {loading ? <span style={{ animation: "spin 1s linear infinite", display: "inline-block", fontSize: 16 }}>⟳</span> : "↑"}
           </button>
         </div>
-        {/* 按住说话按钮 — 语音模式下显示 */}
-        {voiceSupported && voiceEnabled && !isRecording && (
-          <div style={{ textAlign: "center", marginTop: 8 }}>
-            <button
-              onTouchStart={e => { e.preventDefault(); startRecording(); }}
-              onTouchEnd={e => { e.preventDefault(); stopRecording(); }}
-              onMouseDown={startRecording}
-              onMouseUp={stopRecording}
-              onMouseLeave={isRecording ? stopRecording : null}
-              disabled={loading}
-              style={{
-                width: "100%", height: 52, borderRadius: 26,
-                background: `linear-gradient(135deg, ${T.accent}22, ${T.accentDim}22)`,
-                border: `2px solid ${T.accent}66`,
-                color: T.accent, fontSize: 16, fontWeight: 600, fontFamily: "inherit",
-                cursor: loading ? "not-allowed" : "pointer",
-                letterSpacing: 2,
-                transition: "all 0.2s",
-                boxShadow: `0 0 20px ${T.accentGlow}`,
-              }}
-            >
-              🎙 按住说话
-            </button>
-          </div>
         )}
         <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6, textAlign: "center" }}>
           {mastery < 80

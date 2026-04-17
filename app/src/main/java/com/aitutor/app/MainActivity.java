@@ -30,6 +30,8 @@ public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private static final int REQUEST_RECORD_AUDIO = 1001;
     private static final int REQUEST_SPEECH_RECOGNITION = 1002;
+    private static final String EXTRA_LANGUAGE_MODEL = "android.speech.extra.LANGUAGE_MODEL";
+    private static final String LANGUAGE_MODEL_FREE_FORM = "free_form";
     private PermissionRequest pendingPermissionRequest = null;
     private String pendingSpeechCallback = null;
 
@@ -128,8 +130,7 @@ public class MainActivity extends AppCompatActivity {
                         if (isFinishing() || isDestroyed()) return;
                         try {
                             Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                                    RecognizerIntent.EXTRA_LANGUAGE_MODEL_FREE_FORM);
+                            intent.putExtra(EXTRA_LANGUAGE_MODEL, LANGUAGE_MODEL_FREE_FORM);
                             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
                             intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
                             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
@@ -193,8 +194,7 @@ public class MainActivity extends AppCompatActivity {
                     if (isFinishing() || isDestroyed()) return;
                     try {
                         Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                                RecognizerIntent.EXTRA_LANGUAGE_MODEL_FREE_FORM);
+                        intent.putExtra(EXTRA_LANGUAGE_MODEL, LANGUAGE_MODEL_FREE_FORM);
                         intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
                         intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
                         intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
