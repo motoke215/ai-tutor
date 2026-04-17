@@ -99,6 +99,7 @@ public class MainActivity extends AppCompatActivity {
                 if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
                         != PackageManager.PERMISSION_GRANTED) {
                     runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
                         pendingPermissionRequest = null;
                         ActivityCompat.requestPermissions(MainActivity.this,
                                 new String[]{Manifest.permission.RECORD_AUDIO},
@@ -109,11 +110,13 @@ public class MainActivity extends AppCompatActivity {
 
             @JavascriptInterface
             public void startSpeechRecognition(String callbackFunc) {
+                if (isFinishing() || isDestroyed()) return;
                 try {
                     if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
                             != PackageManager.PERMISSION_GRANTED) {
                         pendingSpeechCallback = callbackFunc;
                         runOnUiThread(() -> {
+                            if (isFinishing() || isDestroyed()) return;
                             ActivityCompat.requestPermissions(MainActivity.this,
                                     new String[]{Manifest.permission.RECORD_AUDIO},
                                     REQUEST_RECORD_AUDIO);
@@ -122,18 +125,23 @@ public class MainActivity extends AppCompatActivity {
                     }
                     pendingSpeechCallback = callbackFunc;
                     runOnUiThread(() -> {
-                        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
-                        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
-                        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                        if (isFinishing() || isDestroyed()) return;
                         try {
+                            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                    RecognizerIntent.EXTRA_LANGUAGE_MODEL_FREE_FORM);
+                            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
+                            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+                            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
                             startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
                         } catch (ActivityNotFoundException e) {
                             pendingSpeechCallback = null;
-                            final String js = "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('not_found'); }";
-                            webView.post(() -> webView.evaluateJavascript(js, null));
+                            if (webView != null) {
+                                webView.post(() -> webView.evaluateJavascript(
+                                        "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('not_found'); }", null));
+                            }
+                        } catch (Exception e) {
+                            pendingSpeechCallback = null;
                         }
                     });
                 } catch (Exception e) {
@@ -143,6 +151,7 @@ public class MainActivity extends AppCompatActivity {
 
             @JavascriptInterface
             public void speakText(String text) {
+                if (isFinishing() || isDestroyed()) return;
                 runOnUiThread(() -> {
                     try {
                         android.speech.tts.TextToSpeech tts = new android.speech.tts.TextToSpeech(MainActivity.this, status -> {
@@ -176,18 +185,37 @@ public class MainActivity extends AppCompatActivity {
                 pendingPermissionRequest.grant(pendingPermissionRequest.getResources());
                 pendingPermissionRequest = null;
             }
-            // If speech recognition was pending, retry it now that permission is granted
+            // Retry speech recognition if it was pending
             if (pendingSpeechCallback != null && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
                 final String callback = pendingSpeechCallback;
                 pendingSpeechCallback = null;
                 runOnUiThread(() -> {
-                    Intent intent = new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
-                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
-                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-                    startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
+                    if (isFinishing() || isDestroyed()) return;
+                    try {
+                        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                RecognizerIntent.EXTRA_LANGUAGE_MODEL_FREE_FORM);
+                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
+                        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+                        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                        startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
+                    } catch (Exception e) {
+                        pendingSpeechCallback = null;
+                        if (webView != null) {
+                            webView.post(() -> webView.evaluateJavascript(
+                                    "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('not_found'); }", null));
+                        }
+                    }
+                });
+            } else if (pendingSpeechCallback != null) {
+                // Permission denied — notify error
+                final String callback = pendingSpeechCallback;
+                pendingSpeechCallback = null;
+                runOnUiThread(() -> {
+                    if (webView != null) {
+                        webView.post(() -> webView.evaluateJavascript(
+                                "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('permission_denied'); }", null));
+                    }
                 });
             }
         }
@@ -198,12 +226,12 @@ public class MainActivity extends AppCompatActivity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_SPEECH_RECOGNITION) {
             pendingSpeechCallback = null;
-            if (webView == null || isFinishing()) return;
+            if (webView == null || isFinishing() || isDestroyed()) return;
             if (resultCode == RESULT_OK && data != null) {
                 ArrayList<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
                 if (results != null && results.size() > 0) {
                     String recognizedText = results.get(0);
-                    final String js = "if (typeof window.onSpeechRecognitionResult === 'function') { window.onSpeechRecognitionResult('" + recognizedText.replace("'", "\\'") + "'); } else { console.log('Callback onSpeechRecognitionResult not found'); }";
+                    final String js = "if (typeof window.onSpeechRecognitionResult === 'function') { window.onSpeechRecognitionResult('" + recognizedText.replace("'", "\\'") + "'); } else { console.log('Callback not found'); }";
                     webView.post(() -> webView.evaluateJavascript(js, null));
                 }
             } else {
@@ -225,18 +253,21 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onPause() {
         super.onPause();
-        webView.onPause();
+        if (webView != null) webView.onPause();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        webView.onResume();
+        if (webView != null) webView.onResume();
     }
 
     @Override
     protected void onDestroy() {
-        webView.destroy();
+        if (webView != null) {
+            webView.destroy();
+            webView = null;
+        }
         super.onDestroy();
     }
 }
