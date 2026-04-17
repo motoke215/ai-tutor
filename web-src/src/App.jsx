@@ -655,7 +655,9 @@ export default function App() {
   useEffect(() => {
     const hasSpeech = "SpeechRecognition" in window || "webkitSpeechRecognition" in window;
     const hasSynth = "speechSynthesis" in window;
-    setVoiceSupported(hasSpeech && hasSynth);
+    // Android WebView has no Web Speech API but supports native speech via AndroidPermission bridge
+    const hasNativeSpeech = "AndroidPermission" in window;
+    setVoiceSupported((hasSpeech && hasSynth) || hasNativeSpeech);
     if (hasSynth) synthRef.current = window.speechSynthesis;
   }, []);
 
