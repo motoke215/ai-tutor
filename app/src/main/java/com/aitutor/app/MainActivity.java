@@ -1,7 +1,6 @@
 package com.aitutor.app;
 
 import android.annotation.SuppressLint;
-import android.app.Activity;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebChromeClient;
@@ -14,8 +13,9 @@ import android.graphics.Color;
 import android.os.Build;
 import android.view.View;
 import android.view.Window;
+import androidx.appcompat.app.AppCompatActivity;
 
-public class MainActivity extends Activity {
+public class MainActivity extends AppCompatActivity {
     private WebView webView;
 
     @SuppressLint("SetJavaScriptEnabled")
