@@ -2,7 +2,10 @@ package com.aitutor.app;
 
 import android.annotation.SuppressLint;
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.speech.RecognizerIntent;
+import java.util.ArrayList;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
@@ -23,7 +26,9 @@ import androidx.core.content.ContextCompat;
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private static final int REQUEST_RECORD_AUDIO = 1001;
+    private static final int REQUEST_SPEECH_RECOGNITION = 1002;
     private PermissionRequest pendingPermissionRequest = null;
+    private String pendingSpeechCallback = null;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -84,7 +89,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // JS interface for requesting audio permission
+        // JS interface for requesting audio permission and speech recognition
         webView.addJavascriptInterface(new Object() {
             @JavascriptInterface
             public void requestAudioPermission() {
@@ -97,6 +102,30 @@ public class MainActivity extends AppCompatActivity {
                                 REQUEST_RECORD_AUDIO);
                     });
                 }
+            }
+
+            @JavascriptInterface
+            public void startSpeechRecognition(String callbackFunc) {
+                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    pendingSpeechCallback = callbackFunc;
+                    runOnUiThread(() -> {
+                        ActivityCompat.requestPermissions(MainActivity.this,
+                                new String[]{Manifest.permission.RECORD_AUDIO},
+                                REQUEST_RECORD_AUDIO);
+                    });
+                    return;
+                }
+                pendingSpeechCallback = callbackFunc;
+                runOnUiThread(() -> {
+                    Intent intent = new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                    startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
+                });
             }
         }, "AndroidPermission");
 
@@ -118,6 +147,41 @@ public class MainActivity extends AppCompatActivity {
                 pendingPermissionRequest.grant(pendingPermissionRequest.getResources());
                 pendingPermissionRequest = null;
             }
+            // If speech recognition was pending, retry it now that permission is granted
+            if (pendingSpeechCallback != null && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                final String callback = pendingSpeechCallback;
+                pendingSpeechCallback = null;
+                runOnUiThread(() -> {
+                    Intent intent = new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                    startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
+                });
+            }
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_SPEECH_RECOGNITION) {
+            if (resultCode == RESULT_OK && data != null) {
+                ArrayList<String> results = data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS);
+                if (results != null && results.size() > 0) {
+                    String recognizedText = results.get(0);
+                    String callbackFunc = pendingSpeechCallback != null ? pendingSpeechCallback : "onSpeechRecognitionResult";
+                    String js = "if (typeof window." + callbackFunc + " === 'function') { window." + callbackFunc + "('" + recognizedText.replace("'", "\\'") + "'); }";
+                    webView.evaluateJavascript(js, null);
+                }
+            } else {
+                String callbackFunc = pendingSpeechCallback != null ? pendingSpeechCallback : "onSpeechRecognitionResult";
+                String js = "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('no_result'); }";
+                webView.evaluateJavascript(js, null);
+            }
+            pendingSpeechCallback = null;
         }
     }
 

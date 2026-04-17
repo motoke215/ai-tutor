@@ -670,11 +670,29 @@ export default function App() {
 
   // ── Voice input ──────────────────────────────────────────────────────────
   const startRecording = () => {
-    // 在 Android 上请求麦克风权限
+    // 优先使用 Android 原生语音识别（Android WebView 不支持 Web Speech API）
     if (window.AndroidPermission) {
-      window.AndroidPermission.requestAudioPermission();
+      // 设置全局回调函数
+      window.onSpeechRecognitionResult = (transcript) => {
+        setIsRecording(false);
+        if (transcript && transcript.trim()) {
+          const finalTranscript = transcript.trim();
+          setInput("");
+          setMessages(prev => [...prev, { role: "user", content: finalTranscript }]);
+          callTutor(finalTranscript, apiHistory, true);
+        }
+      };
+      window.onSpeechRecognitionError = (error) => {
+        setIsRecording(false);
+        console.log("Speech recognition error:", error);
+      };
+      // 调用 Android 原生语音识别
+      window.AndroidPermission.startSpeechRecognition("onSpeechRecognitionResult");
+      setIsRecording(true);
+      return;
     }
 
+    // 降级到 Web Speech API（仅在浏览器环境有效）
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     const rec = new SR();
