@@ -155,10 +155,11 @@ public class MainActivity extends AppCompatActivity {
                 if (isFinishing() || isDestroyed()) return;
                 runOnUiThread(() -> {
                     try {
-                        android.speech.tts.TextToSpeech tts = new android.speech.tts.TextToSpeech(MainActivity.this, status -> {
+                        final android.speech.tts.TextToSpeech[] ttsHolder = new android.speech.tts.TextToSpeech[1];
+                        ttsHolder[0] = new android.speech.tts.TextToSpeech(MainActivity.this, status -> {
                             if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                                tts.setLanguage(Locale.CHINA);
-                                tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "tts_utterance_id");
+                                ttsHolder[0].setLanguage(Locale.CHINA);
+                                ttsHolder[0].speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "tts_utterance_id");
                             }
                         });
                     } catch (Exception e) {
