@@ -752,14 +752,30 @@ export default function App() {
   };
 
   // ── Voice output (TTS) ───────────────────────────────────────────────────
+  // Set up TTS callbacks from Android native TTS
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.onTtsReady = () => console.log("TTS ready");
+    window.onTtsStart = () => setIsSpeaking(true);
+    window.onTtsEnd = () => setIsSpeaking(false);
+    window.onTtsError = (err) => {
+      console.error("TTS error:", err);
+      setIsSpeaking(false);
+    };
+    return () => {
+      window.onTtsReady = undefined;
+      window.onTtsStart = undefined;
+      window.onTtsEnd = undefined;
+      window.onTtsError = undefined;
+    };
+  }, []);
+
   const speakText = (text) => {
-    // 优先使用 Android 原生 TTS
+    if (!text || !text.trim()) return;
+    // 优先使用 Android 原生 TTS (state managed by onTtsStart/onTtsEnd callbacks)
     if (window.AndroidPermission && window.AndroidPermission.speakText) {
       try {
         window.AndroidPermission.speakText(text);
-        setIsSpeaking(true);
-        // 简单估计播放时长，2秒后自动结束
-        setTimeout(() => setIsSpeaking(false), Math.max(2000, text.length * 120));
       } catch (e) {
         console.error("Native TTS error:", e);
       }
@@ -782,9 +798,10 @@ export default function App() {
   };
 
   const stopSpeaking = () => {
-    if (window.AndroidPermission && window.AndroidPermission.speakText) {
-      try { window.AndroidPermission.speakText(""); } catch (e) {}
+    if (window.AndroidPermission && window.AndroidPermission.stopSpeaking) {
+      try { window.AndroidPermission.stopSpeaking(); } catch (e) {}
     }
+    setIsSpeaking(false);
     synthRef.current?.cancel();
     setIsSpeaking(false);
   };
@@ -1286,13 +1303,45 @@ export default function App() {
 
         {/* ── Voice mode: large hold-to-speak button ── */}
         {voiceSupported && voiceEnabled ? (
-          <div style={{ textAlign: "center" }}>
-            <button
-              onTouchStart={e => { e.preventDefault(); if (!loading) startRecording(); }}
-              onTouchEnd={e => { e.preventDefault(); if (isRecording) stopRecording(); }}
-              onMouseDown={e => { e.preventDefault(); if (!loading) startRecording(); }}
-              onMouseUp={e => { e.preventDefault(); if (isRecording) stopRecording(); }}
-              disabled={loading}
+          <div
+            style={{
+              textAlign: "center",
+              touchAction: "none",
+              userSelect: "none",
+              WebkitUserSelect: "none",
+              msUserSelect: "none",
+            }}
+            ref={el => {
+              // Use pointer events so touch and mouse are unified
+              if (el) {
+                el.onpointerdown = (e) => {
+                  if (loading) return;
+                  e.preventDefault();
+                  el.setPointerCapture(e.pointerId);
+                  startRecording();
+                };
+                el.onpointerup = (e) => {
+                  if (isRecording) {
+                    e.preventDefault();
+                    stopRecording();
+                  }
+                };
+                el.onpointercancel = (e) => {
+                  if (isRecording) {
+                    e.preventDefault();
+                    stopRecording();
+                  }
+                };
+                el.onpointerleave = (e) => {
+                  if (isRecording) {
+                    e.preventDefault();
+                    stopRecording();
+                  }
+                };
+              }
+            }}
+          >
+            <div
               style={{
                 width: "100%", height: 64, borderRadius: 32,
                 background: isRecording
@@ -1305,10 +1354,13 @@ export default function App() {
                 letterSpacing: 3,
                 transition: "all 0.15s",
                 boxShadow: isRecording ? "0 0 30px rgba(248,113,113,0.4)" : `0 0 24px ${T.accentGlow}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                transform: isRecording ? "scale(0.97)" : "scale(1)",
+                opacity: loading ? 0.5 : 1,
               }}
             >
               {isRecording ? "⏹ 松开发送" : "🎙 按住说话"}
-            </button>
+            </div>
           </div>
         ) : (
         /* ── Text mode: textarea + send button ── */

@@ -6,9 +6,12 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.speech.RecognizerIntent;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.content.ActivityNotFoundException;
-import java.util.ArrayList;
-import java.util.Locale;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.AudioFocus;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
@@ -25,6 +28,9 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import java.util.ArrayList;
+import java.util.Locale;
+import java.util.HashMap;
 
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
@@ -34,6 +40,10 @@ public class MainActivity extends AppCompatActivity {
     private static final String LANGUAGE_MODEL_FREE_FORM = "free_form";
     private PermissionRequest pendingPermissionRequest = null;
     private String pendingSpeechCallback = null;
+
+    // Singleton TTS — initialized once, reused for all speakText calls
+    private TextToSpeech tts = null;
+    private boolean ttsReady = false;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -91,6 +101,51 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
                 request.grant(request.getResources());
+            }
+        });
+
+        // Initialize singleton TTS once
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                ttsReady = true;
+                // Route audio to speaker (not earpiece)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    AudioAttributes audioAttributes = new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build();
+                    tts.setAudioAttributes(audioAttributes);
+                }
+                tts.setLanguage(Locale.CHINA);
+                // Notify JS that TTS is ready
+                if (webView != null && !isFinishing() && !isDestroyed()) {
+                    webView.post(() -> webView.evaluateJavascript(
+                            "if (typeof window.onTtsReady === 'function') { window.onTtsReady(); }", null));
+                }
+                // Listen for TTS completion
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override
+                    public void onStart(String utteranceId) {
+                        if (webView != null && !isFinishing() && !isDestroyed()) {
+                            webView.post(() -> webView.evaluateJavascript(
+                                    "if (typeof window.onTtsStart === 'function') { window.onTtsStart(); }", null));
+                        }
+                    }
+                    @Override
+                    public void onDone(String utteranceId) {
+                        if (webView != null && !isFinishing() && !isDestroyed()) {
+                            webView.post(() -> webView.evaluateJavascript(
+                                    "if (typeof window.onTtsEnd === 'function') { window.onTtsEnd(); }", null));
+                        }
+                    }
+                    @Override
+                    public void onError(String utteranceId) {
+                        if (webView != null && !isFinishing() && !isDestroyed()) {
+                            webView.post(() -> webView.evaluateJavascript(
+                                    "if (typeof window.onTtsError === 'function') { window.onTtsError('error'); }", null));
+                        }
+                    }
+                });
             }
         });
 
@@ -152,20 +207,27 @@ public class MainActivity extends AppCompatActivity {
 
             @JavascriptInterface
             public void speakText(String text) {
-                if (isFinishing() || isDestroyed()) return;
+                if (isFinishing() || isDestroyed() || text == null || text.isEmpty()) return;
                 runOnUiThread(() -> {
-                    try {
-                        final android.speech.tts.TextToSpeech[] ttsHolder = new android.speech.tts.TextToSpeech[1];
-                        ttsHolder[0] = new android.speech.tts.TextToSpeech(MainActivity.this, status -> {
-                            if (status == android.speech.tts.TextToSpeech.SUCCESS) {
-                                ttsHolder[0].setLanguage(Locale.CHINA);
-                                ttsHolder[0].speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "tts_utterance_id");
-                            }
-                        });
-                    } catch (Exception e) {
-                        // TTS not available
+                    if (ttsReady && tts != null) {
+                        HashMap<String, String> params = new HashMap<>();
+                        params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "tts_utterance_id");
+                        tts.speak(text, TextToSpeech.QUEUE_FLUSH, params);
+                    } else {
+                        // TTS not ready yet — notify JS
+                        if (webView != null) {
+                            webView.post(() -> webView.evaluateJavascript(
+                                    "if (typeof window.onTtsError === 'function') { window.onTtsError('not_ready'); }", null));
+                        }
                     }
                 });
+            }
+
+            @JavascriptInterface
+            public void stopSpeaking() {
+                if (tts != null) {
+                    tts.stop();
+                }
             }
         }, "AndroidPermission");
 
@@ -255,6 +317,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onPause() {
         super.onPause();
         if (webView != null) webView.onPause();
+        if (tts != null) tts.stop();
     }
 
     @Override
@@ -265,6 +328,11 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (tts != null) {
+            tts.stop();
+            tts.shutdown();
+            tts = null;
+        }
         if (webView != null) {
             webView.destroy();
             webView = null;
