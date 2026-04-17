@@ -66,7 +66,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        webView.loadUrl("file:///android_assets/index.html");
+        webView.loadUrl("file:///android_asset/index.html");
     }
 
     @Override
