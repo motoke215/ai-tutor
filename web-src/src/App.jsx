@@ -619,7 +619,6 @@ export default function App() {
   const [subject, setSubject] = useState("");
   const [level, setLevel] = useState("初学者");
   const [goal, setGoal] = useState("");
-  const [mastery, setMastery] = useState(0);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -640,16 +639,92 @@ export default function App() {
   // Model config state — load from localStorage for persistence
   const [selectedProvider, setSelectedProvider] = useState(() => localStorage.getItem("aitutor_provider") || "deepseek");
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem("aitutor_model") || "deepseek-chat");
+  const [showModelDropdown, setShowModelDropdown] = useState({});
+  const [lastInputWasVoice, setLastInputWasVoice] = useState(false);
+
+  // ── Multi-user system ─────────────────────────────────────────────────
+  const [users, setUsers] = useState(() => {
+    try { const u = JSON.parse(localStorage.getItem("aitutor_users") || "[]"); return u.length ? u : [{ id: "default", name: "我", avatar: "👤", createdAt: Date.now(), topicMastery: {}, sessionHistory: [] }]; }
+    catch { return [{ id: "default", name: "我", avatar: "👤", createdAt: Date.now(), topicMastery: {}, sessionHistory: [] }]; }
+  });
+  const [currentUserId, setCurrentUserId] = useState(() => localStorage.getItem("aitutor_uid") || "default");
+  const [showUserSwitcher, setShowUserSwitcher] = useState(false);
+  const [showNewUser, setShowNewUser] = useState(false);
+
+  const currentUser = users.find(u => u.id === currentUserId) || users[0];
+  const topicMastery = currentUser?.topicMastery || {};
+  const mastery = topicMastery[teacher.name] || 0;
+
+  // Update mastery for current topic
+  const updateMastery = useCallback((delta) => {
+    setUsers(prev => {
+      const updated = prev.map(u => {
+        if (u.id !== currentUserId) return u;
+        const prevMastery = u.topicMastery[teacher.name] || 0;
+        const newMastery = Math.min(100, Math.max(0, prevMastery + delta));
+        return { ...u, topicMastery: { ...u.topicMastery, [teacher.name]: newMastery } };
+      });
+      localStorage.setItem("aitutor_users", JSON.stringify(updated));
+      return updated;
+    });
+  }, [currentUserId, teacher.name]);
+
+  // Record session completion
+  const recordSession = useCallback((turns, correct) => {
+    setUsers(prev => {
+      const updated = prev.map(u => {
+        if (u.id !== currentUserId) return u;
+        const entry = { ts: Date.now(), topic: teacher.name, turns, correct };
+        return { ...u, sessionHistory: [entry, ...(u.sessionHistory||[]).slice(0,49)] };
+      });
+      localStorage.setItem("aitutor_users", JSON.stringify(updated));
+      return updated;
+    });
+  }, [currentUserId, teacher.name]);
+
+  // Add new user
+  const addUser = (name, avatar) => {
+    const id = "u_" + Date.now();
+    setUsers(prev => {
+      const updated = [...prev, { id, name, avatar, createdAt: Date.now(), topicMastery: {}, sessionHistory: [] }];
+      localStorage.setItem("aitutor_users", JSON.stringify(updated));
+      return updated;
+    });
+    setCurrentUserId(id);
+    localStorage.setItem("aitutor_uid", id);
+    setShowNewUser(false);
+  };
+
+  // Switch user
+  const switchUser = (id) => {
+    setCurrentUserId(id);
+    localStorage.setItem("aitutor_uid", id);
+    setShowUserSwitcher(false);
+  };
+
+  // Delete user
+  const deleteUser = (id) => {
+    if (users.length <= 1) return;
+    setUsers(prev => {
+      const updated = prev.filter(u => u.id !== id);
+      localStorage.setItem("aitutor_users", JSON.stringify(updated));
+      return updated;
+    });
+    if (id === currentUserId) {
+      setCurrentUserId(updated[0]?.id);
+      localStorage.setItem("aitutor_uid", updated[0]?.id);
+    }
+  };
+
+  // Persist API keys per user
   const [apiKeys, setApiKeys] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("aitutor_apikeys") || "{}"); }
+    try { return JSON.parse(localStorage.getItem("aitutor_apikeys_" + currentUserId) || "{}"); }
     catch { return {}; }
   });
   const [customBaseUrl, setCustomBaseUrl] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("aitutor_baseurl") || "{}"); }
+    try { return JSON.parse(localStorage.getItem("aitutor_baseurl_" + currentUserId) || "{}"); }
     catch { return {}; }
   });
-  const [showModelDropdown, setShowModelDropdown] = useState({});
-  const [lastInputWasVoice, setLastInputWasVoice] = useState(false);
 
   const chatEndRef = useRef(null);
   const textareaRef = useRef(null);
@@ -662,7 +737,7 @@ export default function App() {
     const hasSpeech = "SpeechRecognition" in window || "webkitSpeechRecognition" in window;
     const hasSynth = "speechSynthesis" in window;
     // Android WebView has no Web Speech API but supports native speech via AndroidPermission bridge
-    const hasNativeSpeech = "AndroidPermission" in window;
+    const hasNativeSpeech = "AndroidTutor" in window;
     setVoiceSupported((hasSpeech && hasSynth) || hasNativeSpeech);
     if (hasSynth) synthRef.current = window.speechSynthesis;
   }, []);
@@ -670,8 +745,8 @@ export default function App() {
   // Persist model config to localStorage
   useEffect(() => { localStorage.setItem("aitutor_provider", selectedProvider); }, [selectedProvider]);
   useEffect(() => { localStorage.setItem("aitutor_model", selectedModel); }, [selectedModel]);
-  useEffect(() => { localStorage.setItem("aitutor_apikeys", JSON.stringify(apiKeys)); }, [apiKeys]);
-  useEffect(() => { localStorage.setItem("aitutor_baseurl", JSON.stringify(customBaseUrl)); }, [customBaseUrl]);
+  useEffect(() => { localStorage.setItem("aitutor_apikeys_" + currentUserId, JSON.stringify(apiKeys)); }, [apiKeys, currentUserId]);
+  useEffect(() => { localStorage.setItem("aitutor_baseurl_" + currentUserId, JSON.stringify(customBaseUrl)); }, [customBaseUrl, currentUserId]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
@@ -683,58 +758,59 @@ export default function App() {
   }, [input]);
 
   // ── Voice input ──────────────────────────────────────────────────────────
+  // Set up Android STT callbacks — registered once, reused
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window._sttOnResult = (cbId, transcript) => {
+      setIsRecording(false);
+      if (transcript && transcript.trim()) {
+        const text = transcript.trim();
+        setInput("");
+        setMessages(prev => [...prev, { role: "user", content: text }]);
+        callTutor(text, apiHistory, true);
+      }
+    };
+    window._sttOnError = (cbId, err) => {
+      setIsRecording(false);
+      console.log("STT error:", err);
+    };
+    return () => {
+      window._sttOnResult = undefined;
+      window._sttOnError = undefined;
+    };
+  }, [apiHistory]);
+
   const startRecording = () => {
-    // 优先使用 Android 原生语音识别（Android WebView 不支持 Web Speech API）
-    if (window.AndroidPermission && window.AndroidPermission.startSpeechRecognition) {
+    if (loading || isRecording) return;
+    // Use Android native speech recognition via AndroidTutor bridge
+    if (window.AndroidTutor && window.AndroidTutor.sttStart) {
       try {
-        // 设置全局回调函数
-        window.onSpeechRecognitionResult = (transcript) => {
-          setIsRecording(false);
-          if (transcript && transcript.trim()) {
-            const finalTranscript = transcript.trim();
-            setInput("");
-            setMessages(prev => [...prev, { role: "user", content: finalTranscript }]);
-            callTutor(finalTranscript, apiHistory, true);
-          }
-        };
-        window.onSpeechRecognitionError = (error) => {
-          setIsRecording(false);
-          console.log("Speech recognition error:", error);
-        };
-        // 调用 Android 原生语音识别
-        window.AndroidPermission.startSpeechRecognition("onSpeechRecognitionResult");
+        window.AndroidTutor.sttStart("stt_cb_1");
         setIsRecording(true);
       } catch (e) {
-        console.error("Speech recognition error:", e);
+        console.error("STT start error:", e);
         setIsRecording(false);
       }
       return;
     }
-
-    // 降级到 Web Speech API（仅在浏览器环境有效）
+    // Fallback to Web Speech API (browser only)
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     const rec = new SR();
     rec.lang = teacher.lang || "zh-CN";
     rec.continuous = false;
-    rec.interimResults = true;
+    rec.interimResults = false;
     rec.onresult = (e) => {
       const results = Array.from(e.results);
-      const transcript = results.map(r => r[0].transcript).join("");
-      setInput(transcript);
-      setLastInputWasVoice(true);
-
-      // 检查是否是最终结果（用户停止说话）
       const finalResult = results.find(r => r.isFinal);
       if (finalResult) {
-        const finalTranscript = finalResult[0].transcript.trim();
-        if (finalTranscript) {
+        const text = finalResult[0].transcript.trim();
+        if (text) {
           setIsRecording(false);
-          // 语音输入最终结果后自动发送
           setTimeout(() => {
-            setInput(""); // 清空输入框
-            setMessages(prev => [...prev, { role: "user", content: finalTranscript }]);
-            callTutor(finalTranscript, apiHistory, true); // 语音输入标记
+            setInput("");
+            setMessages(prev => [...prev, { role: "user", content: text }]);
+            callTutor(text, apiHistory, true);
           }, 100);
         }
       }
@@ -748,40 +824,43 @@ export default function App() {
 
   const stopRecording = () => {
     recognitionRef.current?.stop();
+    if (window.AndroidTutor && window.AndroidTutor.sttStop) {
+      try { window.AndroidTutor.sttStop(); } catch (e) {}
+    }
     setIsRecording(false);
   };
 
   // ── Voice output (TTS) ───────────────────────────────────────────────────
-  // Set up TTS callbacks from Android native TTS
+  // Set up Android TTS callbacks — manages isSpeaking state
   useEffect(() => {
     if (typeof window === "undefined") return;
-    window.onTtsReady = () => console.log("TTS ready");
-    window.onTtsStart = () => setIsSpeaking(true);
-    window.onTtsEnd = () => setIsSpeaking(false);
-    window.onTtsError = (err) => {
+    window._ttsReady = () => console.log("TTS ready");
+    window._ttsOnStart = () => setIsSpeaking(true);
+    window._ttsOnEnd = () => setIsSpeaking(false);
+    window._ttsOnError = (err) => {
       console.error("TTS error:", err);
       setIsSpeaking(false);
     };
     return () => {
-      window.onTtsReady = undefined;
-      window.onTtsStart = undefined;
-      window.onTtsEnd = undefined;
-      window.onTtsError = undefined;
+      window._ttsReady = undefined;
+      window._ttsOnStart = undefined;
+      window._ttsOnEnd = undefined;
+      window._ttsOnError = undefined;
     };
   }, []);
 
   const speakText = (text) => {
     if (!text || !text.trim()) return;
-    // 优先使用 Android 原生 TTS (state managed by onTtsStart/onTtsEnd callbacks)
-    if (window.AndroidPermission && window.AndroidPermission.speakText) {
+    // Use Android native TTS via AndroidTutor bridge
+    if (window.AndroidTutor && window.AndroidTutor.ttsSpeak) {
       try {
-        window.AndroidPermission.speakText(text);
+        window.AndroidTutor.ttsSpeak(text);
       } catch (e) {
         console.error("Native TTS error:", e);
       }
       return;
     }
-    // 降级到 Web Speech Synthesis
+    // Fallback to Web Speech Synthesis
     if (!synthRef.current || !voiceEnabled) return;
     synthRef.current.cancel();
     const utter = new SpeechSynthesisUtterance(text);
@@ -798,12 +877,11 @@ export default function App() {
   };
 
   const stopSpeaking = () => {
-    if (window.AndroidPermission && window.AndroidPermission.stopSpeaking) {
-      try { window.AndroidPermission.stopSpeaking(); } catch (e) {}
+    if (window.AndroidTutor && window.AndroidTutor.ttsStop) {
+      try { window.AndroidTutor.ttsStop(); } catch (e) {}
     }
     setIsSpeaking(false);
     synthRef.current?.cancel();
-    setIsSpeaking(false);
   };
 
   // ── Parse AI response ────────────────────────────────────────────────────
@@ -904,7 +982,10 @@ export default function App() {
       const data = await res.json();
       const raw = data.choices?.[0]?.message?.content || "{}";
       const parsed = parseResponse(raw);
-      const newMastery = Math.max(0, Math.min(100, parsed.currentMastery ?? (mastery + (parsed.masteryDelta ?? 0))));
+      const delta = parsed.currentMastery !== undefined
+        ? (parsed.currentMastery - mastery)
+        : (parsed.masteryDelta ?? 0);
+      const newMastery = Math.max(0, Math.min(100, mastery + delta));
 
       const newHistory = [...msgs, { role: "assistant", content: raw }];
       setApiHistory(newHistory);
@@ -917,7 +998,7 @@ export default function App() {
         suggestedResponses: parsed.suggestedResponses || [],
       };
       setMessages(prev => [...prev, aiMsg]);
-      setMastery(newMastery);
+      if (delta !== 0) updateMastery(delta);
       setSessionStats(prev => ({ ...prev, turns: prev.turns + 1 }));
 
       if (autoSpeak && parsed.message) speakText(parsed.message.slice(0, 200));
@@ -934,7 +1015,6 @@ export default function App() {
     setTeacher(t);
     systemRef.current = buildSystem(subject.trim(), level, goal.trim(), t);
     setPhase("chat");
-    setMastery(0);
     setMessages([]);
     setApiHistory([]);
     setSessionStats({ turns: 0, startTime: Date.now() });
@@ -1002,6 +1082,12 @@ export default function App() {
             title="模型配置"
             style={{ background: T.accentGlow, border: `1px solid ${T.border}`, borderRadius: 20, padding: "4px 10px", fontSize: 14, cursor: "pointer", color: T.accent }}>
             🤖
+          </button>
+          {/* User switcher */}
+          <button onClick={() => setShowUserSwitcher(true)}
+            title={`${currentUser.name} · 切换用户`}
+            style={{ background: T.accentGlow, border: `1px solid ${T.border}`, borderRadius: 20, padding: "4px 10px", fontSize: 14, cursor: "pointer", color: T.accent }}>
+            {currentUser.avatar}
           </button>
           {Object.values(THEMES).map(th => (
             <button key={th.id} onClick={() => setThemeId(th.id)}
@@ -1303,13 +1389,9 @@ export default function App() {
 
         {/* ── Voice mode: large hold-to-speak button ── */}
         {voiceSupported && voiceEnabled ? (
-          <div
-            style={{
-              textAlign: "center",
-              touchAction: "none",
-              userSelect: "none",
-              WebkitUserSelect: "none",
-            }}
+          <button
+            type="button"
+            disabled={loading}
             onTouchStart={e => {
               e.stopPropagation();
               e.preventDefault();
@@ -1336,28 +1418,27 @@ export default function App() {
             onMouseLeave={e => {
               if (isRecording) { e.preventDefault(); stopRecording(); }
             }}
+            style={{
+              width: "100%", height: 64, borderRadius: 32,
+              background: isRecording
+                ? "linear-gradient(135deg, #f87171, #ef4444)"
+                : `linear-gradient(135deg, ${T.accent}22, ${T.accentDim}22)`,
+              border: `2px solid ${isRecording ? "#f87171" : T.accent + "88"}`,
+              color: isRecording ? "#fff" : T.accent,
+              fontSize: 18, fontWeight: 700, fontFamily: "inherit",
+              cursor: loading ? "not-allowed" : "pointer",
+              letterSpacing: 3,
+              transition: "all 0.15s",
+              boxShadow: isRecording ? "0 0 30px rgba(248,113,113,0.4)" : `0 0 24px ${T.accentGlow}`,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transform: isRecording ? "scale(0.97)" : "scale(1)",
+              opacity: loading ? 0.5 : 1,
+              touchAction: "none",
+              WebkitTapHighlightColor: "transparent",
+            }}
           >
-            <div
-              style={{
-                width: "100%", height: 64, borderRadius: 32,
-                background: isRecording
-                  ? "linear-gradient(135deg, #f87171, #ef4444)"
-                  : `linear-gradient(135deg, ${T.accent}22, ${T.accentDim}22)`,
-                border: `2px solid ${isRecording ? "#f87171" : T.accent + "88"}`,
-                color: isRecording ? "#fff" : T.accent,
-                fontSize: 18, fontWeight: 700, fontFamily: "inherit",
-                cursor: loading ? "not-allowed" : "pointer",
-                letterSpacing: 3,
-                transition: "all 0.15s",
-                boxShadow: isRecording ? "0 0 30px rgba(248,113,113,0.4)" : `0 0 24px ${T.accentGlow}`,
-                display: "flex", alignItems: "center", justifyContent: "center",
-                transform: isRecording ? "scale(0.97)" : "scale(1)",
-                opacity: loading ? 0.5 : 1,
-              }}
-            >
-              {isRecording ? "⏹ 松开发送" : "🎙 按住说话"}
-            </div>
-          </div>
+            {isRecording ? "⏹ 松开发送" : "🎙 按住说话"}
+          </button>
         ) : (
         /* ── Text mode: textarea + send button ── */
         <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
@@ -1409,6 +1490,77 @@ export default function App() {
           setShowModelDropdown={setShowModelDropdown}
           onClose={() => setShowModelConfig(false)}
         />
+      )}
+
+      {/* User Switcher Modal */}
+      {showUserSwitcher && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 200,
+          background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
+        }}>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 20, padding: 24, width: "100%", maxWidth: 360, maxHeight: "80vh", overflowY: "auto" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <span style={{ fontSize: 17, fontWeight: 700, color: T.text }}>切换用户</span>
+              <button onClick={() => setShowUserSwitcher(false)} style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 20 }}>✕</button>
+            </div>
+            {/* User list */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+              {users.map(u => (
+                <div key={u.id} style={{
+                  display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 12,
+                  background: u.id === currentUserId ? T.accentGlow : T.inputBg,
+                  border: `1px solid ${u.id === currentUserId ? T.accent : T.border}`,
+                  cursor: "pointer",
+                }} onClick={() => switchUser(u.id)}>
+                  <span style={{ fontSize: 28 }}>{u.avatar}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: T.text }}>{u.name}</div>
+                    <div style={{ fontSize: 11, color: T.textMuted }}>掌握 {Object.keys(u.topicMastery||{}).length} 个话题</div>
+                  </div>
+                  {u.id === currentUserId && <span style={{ color: T.accent, fontSize: 14 }}>✓</span>}
+                  {users.length > 1 && <button onClick={e => { e.stopPropagation(); deleteUser(u.id); }} style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 14 }}>🗑</button>}
+                </div>
+              ))}
+            </div>
+            {/* Add new user */}
+            {showNewUser ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <input
+                  id="new_user_name"
+                  placeholder="用户名（昵称）"
+                  style={{ background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "10px 14px", color: T.text, fontSize: 14, fontFamily: "inherit", width: "100%" }}
+                />
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {["👤","🧑","👨","👩","🧒","👴","👵","🤖"].map(a => (
+                    <button key={a} className="new_user_avatar_btn" onClick={() => { const i = document.getElementById("new_user_name"); if(i) i.value = a; }}
+                      style={{ background: T.inputBg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "6px 10px", fontSize: 18, cursor: "pointer" }}>{a}</button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => {
+                    const i = document.getElementById("new_user_name");
+                    const name = i?.value?.trim() || "我";
+                    const avatarEl = document.querySelector(".new_user_avatar_btn");
+                    const avatar = "👤";
+                    addUser(name, avatar);
+                  }}
+                    style={{ flex: 1, padding: "10px", borderRadius: 10, background: `linear-gradient(135deg, ${T.accent}, ${T.accentDim})`, border: "none", color: T.userText, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                    创建
+                  </button>
+                  <button onClick={() => setShowNewUser(false)}
+                    style={{ flex: 1, padding: "10px", borderRadius: 10, background: T.inputBg, border: `1px solid ${T.border}`, color: T.text, cursor: "pointer", fontFamily: "inherit" }}>
+                    取消
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setShowNewUser(true)}
+                style={{ width: "100%", padding: "10px", borderRadius: 10, background: T.inputBg, border: `1px dashed ${T.border}`, color: T.textMuted, cursor: "pointer", fontFamily: "inherit" }}>
+                + 添加新用户
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

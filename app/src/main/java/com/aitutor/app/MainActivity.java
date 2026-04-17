@@ -31,309 +31,262 @@ import java.util.HashMap;
 
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
-    private static final int REQUEST_RECORD_AUDIO = 1001;
-    private static final int REQUEST_SPEECH_RECOGNITION = 1002;
-    private static final String EXTRA_LANGUAGE_MODEL = "android.speech.extra.LANGUAGE_MODEL";
-    private static final String LANGUAGE_MODEL_FREE_FORM = "free_form";
+    private static final int REQ_RECORD_AUDIO = 1001;
+    private static final int REQ_SPEECH_RECOGNITION = 1002;
     private PermissionRequest pendingPermissionRequest = null;
-    private String pendingSpeechCallback = null;
+    private String pendingSttCallback = null;
 
-    // Singleton TTS — initialized once, reused for all speakText calls
+    // ── Singleton TTS ───────────────────────────────────────────────────────
     private TextToSpeech tts = null;
     private boolean ttsReady = false;
+
+    private void initTts() {
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                ttsReady = true;
+                // Force audio to speaker, not earpiece
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    AudioAttributes aa = new AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build();
+                    tts.setAudioAttributes(aa);
+                }
+                tts.setLanguage(Locale.CHINA);
+                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String id) {
+                        postJs("if(window._ttsOnStart)window._ttsOnStart()");
+                    }
+                    @Override public void onDone(String id) {
+                        postJs("if(window._ttsOnEnd)window._ttsOnEnd()");
+                    }
+                    @Override public void onError(String id) {
+                        postJs("if(window._ttsOnError)window._ttsOnError('err')");
+                    }
+                });
+                postJs("if(window._ttsReady)window._ttsReady()");
+            }
+        });
+    }
+
+    private void postJs(String js) {
+        if (webView == null || isFinishing() || isDestroyed()) return;
+        webView.post(() -> webView.evaluateJavascript(js, null));
+    }
+
+    private boolean checkAudioPermission() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestAudioPermission() {
+        if (!checkAudioPermission()) {
+            runOnUiThread(() -> ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.RECORD_AUDIO}, REQ_RECORD_AUDIO));
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Enable edge-to-edge display
+        // Edge-to-edge display
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            Window window = getWindow();
-            window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
-            window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-            window.setStatusBarColor(Color.TRANSPARENT);
-            window.setNavigationBarColor(Color.parseColor("#0f0d0a"));
-            window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
+            Window w = getWindow();
+            w.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS
+                    | WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
+            w.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+            w.setStatusBarColor(Color.TRANSPARENT);
+            w.setNavigationBarColor(Color.parseColor("#0f0d0a"));
+            w.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT);
         }
 
         webView = new WebView(this);
         setContentView(webView);
 
-        WebSettings settings = webView.getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setDatabaseEnabled(true);
-        settings.setAllowFileAccess(true);
-        settings.setAllowContentAccess(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setAllowFileAccessFromFileURLs(true);
-        settings.setAllowUniversalAccessFromFileURLs(true);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        }
+        WebSettings s = webView.getSettings();
+        s.setJavaScriptEnabled(true);
+        s.setDomStorageEnabled(true);
+        s.setDatabaseEnabled(true);
+        s.setAllowFileAccess(true);
+        s.setAllowContentAccess(true);
+        s.setMediaPlaybackRequiresUserGesture(false);
+        s.setCacheMode(WebSettings.LOAD_DEFAULT);
+        s.setAllowFileAccessFromFileURLs(true);
+        s.setAllowUniversalAccessFromFileURLs(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP)
+            s.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
 
         webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                return false;
-            }
+            @Override public boolean shouldOverrideUrlLoading(WebView v, String u) { return false; }
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
-            @Override
-            public void onPermissionRequest(final PermissionRequest request) {
-                String[] resources = request.getResources();
-                for (String resource : resources) {
-                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
-                        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
-                                != PackageManager.PERMISSION_GRANTED) {
-                            pendingPermissionRequest = request;
-                            ActivityCompat.requestPermissions(MainActivity.this,
-                                    new String[]{Manifest.permission.RECORD_AUDIO},
-                                    REQUEST_RECORD_AUDIO);
+            @Override public void onPermissionRequest(PermissionRequest req) {
+                for (String r : req.getResources()) {
+                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(r)) {
+                        if (!checkAudioPermission()) {
+                            pendingPermissionRequest = req;
+                            requestAudioPermission();
                             return;
                         }
                     }
                 }
-                request.grant(request.getResources());
+                req.grant(req.getResources());
             }
         });
 
-        // Initialize singleton TTS once
-        tts = new TextToSpeech(this, status -> {
-            if (status == TextToSpeech.SUCCESS) {
-                ttsReady = true;
-                // Route audio to speaker (not earpiece)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build();
-                    tts.setAudioAttributes(audioAttributes);
-                }
-                tts.setLanguage(Locale.CHINA);
-                // Notify JS that TTS is ready
-                if (webView != null && !isFinishing() && !isDestroyed()) {
-                    webView.post(() -> webView.evaluateJavascript(
-                            "if (typeof window.onTtsReady === 'function') { window.onTtsReady(); }", null));
-                }
-                // Listen for TTS completion
-                tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                    @Override
-                    public void onStart(String utteranceId) {
-                        if (webView != null && !isFinishing() && !isDestroyed()) {
-                            webView.post(() -> webView.evaluateJavascript(
-                                    "if (typeof window.onTtsStart === 'function') { window.onTtsStart(); }", null));
-                        }
-                    }
-                    @Override
-                    public void onDone(String utteranceId) {
-                        if (webView != null && !isFinishing() && !isDestroyed()) {
-                            webView.post(() -> webView.evaluateJavascript(
-                                    "if (typeof window.onTtsEnd === 'function') { window.onTtsEnd(); }", null));
-                        }
-                    }
-                    @Override
-                    public void onError(String utteranceId) {
-                        if (webView != null && !isFinishing() && !isDestroyed()) {
-                            webView.post(() -> webView.evaluateJavascript(
-                                    "if (typeof window.onTtsError === 'function') { window.onTtsError('error'); }", null));
-                        }
-                    }
-                });
-            }
-        });
+        // ── Initialize TTS once ─────────────────────────────────────────────
+        initTts();
 
-        // JS interface for requesting audio permission and speech recognition
+        // ── JS bridge: AndroidTutor ───────────────────────────────────────
         webView.addJavascriptInterface(new Object() {
-            @JavascriptInterface
-            public void requestAudioPermission() {
-                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
-                        != PackageManager.PERMISSION_GRANTED) {
-                    runOnUiThread(() -> {
-                        if (isFinishing() || isDestroyed()) return;
-                        pendingPermissionRequest = null;
-                        ActivityCompat.requestPermissions(MainActivity.this,
-                                new String[]{Manifest.permission.RECORD_AUDIO},
-                                REQUEST_RECORD_AUDIO);
-                    });
-                }
-            }
 
+            // TTS: speak text
             @JavascriptInterface
-            public void startSpeechRecognition(String callbackFunc) {
-                if (isFinishing() || isDestroyed()) return;
-                try {
-                    if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
-                            != PackageManager.PERMISSION_GRANTED) {
-                        pendingSpeechCallback = callbackFunc;
-                        runOnUiThread(() -> {
-                            if (isFinishing() || isDestroyed()) return;
-                            ActivityCompat.requestPermissions(MainActivity.this,
-                                    new String[]{Manifest.permission.RECORD_AUDIO},
-                                    REQUEST_RECORD_AUDIO);
-                        });
-                        return;
-                    }
-                    pendingSpeechCallback = callbackFunc;
-                    runOnUiThread(() -> {
-                        if (isFinishing() || isDestroyed()) return;
-                        try {
-                            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                            intent.putExtra(EXTRA_LANGUAGE_MODEL, LANGUAGE_MODEL_FREE_FORM);
-                            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
-                            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
-                            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-                            startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
-                        } catch (ActivityNotFoundException e) {
-                            pendingSpeechCallback = null;
-                            if (webView != null) {
-                                webView.post(() -> webView.evaluateJavascript(
-                                        "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('not_found'); }", null));
-                            }
-                        } catch (Exception e) {
-                            pendingSpeechCallback = null;
-                        }
-                    });
-                } catch (Exception e) {
-                    pendingSpeechCallback = null;
-                }
-            }
-
-            @JavascriptInterface
-            public void speakText(String text) {
-                if (isFinishing() || isDestroyed() || text == null || text.isEmpty()) return;
+            public void ttsSpeak(String text) {
+                if (text == null || text.isEmpty() || tts == null) return;
                 runOnUiThread(() -> {
-                    if (ttsReady && tts != null) {
-                        HashMap<String, String> params = new HashMap<>();
-                        params.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "tts_utterance_id");
-                        tts.speak(text, TextToSpeech.QUEUE_FLUSH, params);
-                    } else {
-                        // TTS not ready yet — notify JS
-                        if (webView != null) {
-                            webView.post(() -> webView.evaluateJavascript(
-                                    "if (typeof window.onTtsError === 'function') { window.onTtsError('not_ready'); }", null));
-                        }
+                    if (!ttsReady) return;
+                    HashMap<String,String> p = new HashMap<>();
+                    p.put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "uid_tts");
+                    tts.speak(text, TextToSpeech.QUEUE_FLUSH, p);
+                });
+            }
+
+            // TTS: stop speaking
+            @JavascriptInterface
+            public void ttsStop() {
+                if (tts != null) tts.stop();
+            }
+
+            // TTS: check if ready
+            @JavascriptInterface
+            public boolean ttsIsReady() {
+                return ttsReady;
+            }
+
+            // STT: start listening via system speech dialog
+            @JavascriptInterface
+            public void sttStart(String callbackId) {
+                if (isFinishing() || isDestroyed()) return;
+                pendingSttCallback = callbackId;
+                if (!checkAudioPermission()) {
+                    runOnUiThread(() -> ActivityCompat.requestPermissions(MainActivity.this,
+                            new String[]{Manifest.permission.RECORD_AUDIO}, REQ_RECORD_AUDIO));
+                    return;
+                }
+                runOnUiThread(() -> {
+                    if (isFinishing() || isDestroyed()) return;
+                    try {
+                        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
+                        i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+                        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                        startActivityForResult(i, REQ_SPEECH_RECOGNITION);
+                    } catch (ActivityNotFoundException e) {
+                        pendingSttCallback = null;
+                        postJs("if(window._sttOnError)window._sttOnError('not_found','not_found')");
+                    } catch (Exception e) {
+                        pendingSttCallback = null;
+                        postJs("if(window._sttOnError)window._sttOnError('error','error')");
                     }
                 });
             }
 
+            // STT: check if permission granted
             @JavascriptInterface
-            public void stopSpeaking() {
-                if (tts != null) {
-                    tts.stop();
-                }
+            public boolean sttHasPermission() {
+                return checkAudioPermission();
             }
-        }, "AndroidPermission");
+
+            // STT: request microphone permission
+            @JavascriptInterface
+            public void sttRequestPermission() {
+                requestAudioPermission();
+            }
+
+        }, "AndroidTutor");
 
         webView.loadUrl("file:///android_asset/index.html");
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == REQUEST_RECORD_AUDIO) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                // Permission granted
+    public void onRequestPermissionsResult(int reqCode, @NonNull String[] perms, @NonNull int[] results) {
+        super.onRequestPermissionsResult(reqCode, perms, results);
+        if (reqCode == REQ_RECORD_AUDIO) {
+            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
+                // permission granted — retry STT if pending
+                if (pendingSttCallback != null) {
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        try {
+                            Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                    RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                            i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
+                            i.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+                            i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                            startActivityForResult(i, REQ_SPEECH_RECOGNITION);
+                        } catch (Exception e) {
+                            pendingSttCallback = null;
+                            postJs("if(window._sttOnError)window._sttOnError('error','error')");
+                        }
+                    });
+                }
             } else {
-                runOnUiThread(() -> {
-                    Toast.makeText(this, "需要麦克风权限才能使用语音功能", Toast.LENGTH_LONG).show();
-                });
+                runOnUiThread(() -> Toast.makeText(this, "需要麦克风权限", Toast.LENGTH_LONG).show());
+                pendingSttCallback = null;
+                postJs("if(window._sttOnError)window._sttOnError('denied','permission_denied')");
             }
             if (pendingPermissionRequest != null) {
                 pendingPermissionRequest.grant(pendingPermissionRequest.getResources());
                 pendingPermissionRequest = null;
             }
-            // Retry speech recognition if it was pending
-            if (pendingSpeechCallback != null && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                final String callback = pendingSpeechCallback;
-                pendingSpeechCallback = null;
-                runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    try {
-                        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                        intent.putExtra(EXTRA_LANGUAGE_MODEL, LANGUAGE_MODEL_FREE_FORM);
-                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
-                        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
-                        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-                        startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
-                    } catch (Exception e) {
-                        pendingSpeechCallback = null;
-                        if (webView != null) {
-                            webView.post(() -> webView.evaluateJavascript(
-                                    "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('not_found'); }", null));
-                        }
-                    }
-                });
-            } else if (pendingSpeechCallback != null) {
-                // Permission denied — notify error
-                final String callback = pendingSpeechCallback;
-                pendingSpeechCallback = null;
-                runOnUiThread(() -> {
-                    if (webView != null) {
-                        webView.post(() -> webView.evaluateJavascript(
-                                "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('permission_denied'); }", null));
-                    }
-                });
-            }
         }
     }
 
     @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == REQUEST_SPEECH_RECOGNITION) {
-            pendingSpeechCallback = null;
+    protected void onActivityResult(int reqCode, int resultCode, Intent data) {
+        super.onActivityResult(reqCode, resultCode, data);
+        if (reqCode == REQ_SPEECH_RECOGNITION) {
+            String cb = pendingSttCallback;
+            pendingSttCallback = null;
             if (webView == null || isFinishing() || isDestroyed()) return;
             if (resultCode == RESULT_OK && data != null) {
                 ArrayList<String> results = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-                if (results != null && results.size() > 0) {
-                    String recognizedText = results.get(0);
-                    final String js = "if (typeof window.onSpeechRecognitionResult === 'function') { window.onSpeechRecognitionResult('" + recognizedText.replace("'", "\\'") + "'); } else { console.log('Callback not found'); }";
-                    webView.post(() -> webView.evaluateJavascript(js, null));
+                if (results != null && !results.isEmpty()) {
+                    String text = results.get(0).replace("'", "\\'");
+                    postJs("if(window._sttOnResult)window._sttOnResult('" + cb + "','" + text + "')");
+                    return;
                 }
-            } else {
-                final String js = "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('no_result'); }";
-                webView.post(() -> webView.evaluateJavascript(js, null));
             }
+            postJs("if(window._sttOnError)window._sttOnError('" + cb + "','no_result')");
         }
     }
 
-    @Override
-    public void onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-        }
+    @Override public void onBackPressed() {
+        if (webView != null && webView.canGoBack()) webView.goBack();
+        else super.onBackPressed();
     }
 
-    @Override
-    protected void onPause() {
+    @Override protected void onPause() {
         super.onPause();
-        if (webView != null) webView.onPause();
         if (tts != null) tts.stop();
+        if (webView != null) webView.onPause();
     }
 
-    @Override
-    protected void onResume() {
+    @Override protected void onResume() {
         super.onResume();
         if (webView != null) webView.onResume();
     }
 
-    @Override
-    protected void onDestroy() {
-        if (tts != null) {
-            tts.stop();
-            tts.shutdown();
-            tts = null;
-        }
-        if (webView != null) {
-            webView.destroy();
-            webView = null;
-        }
+    @Override protected void onDestroy() {
+        if (tts != null) { tts.stop(); tts.shutdown(); tts = null; }
+        if (webView != null) { webView.destroy(); webView = null; }
         super.onDestroy();
     }
 }
