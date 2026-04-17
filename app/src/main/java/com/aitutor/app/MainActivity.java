@@ -5,7 +5,10 @@ import android.Manifest;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.speech.RecognizerIntent;
+import android.speech.tts.TextToSpeech;
+import android.content.ActivityNotFoundException;
 import java.util.ArrayList;
+import java.util.Locale;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
@@ -106,25 +109,51 @@ public class MainActivity extends AppCompatActivity {
 
             @JavascriptInterface
             public void startSpeechRecognition(String callbackFunc) {
-                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
-                        != PackageManager.PERMISSION_GRANTED) {
+                try {
+                    if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                            != PackageManager.PERMISSION_GRANTED) {
+                        pendingSpeechCallback = callbackFunc;
+                        runOnUiThread(() -> {
+                            ActivityCompat.requestPermissions(MainActivity.this,
+                                    new String[]{Manifest.permission.RECORD_AUDIO},
+                                    REQUEST_RECORD_AUDIO);
+                        });
+                        return;
+                    }
                     pendingSpeechCallback = callbackFunc;
                     runOnUiThread(() -> {
-                        ActivityCompat.requestPermissions(MainActivity.this,
-                                new String[]{Manifest.permission.RECORD_AUDIO},
-                                REQUEST_RECORD_AUDIO);
+                        Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+                        intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
+                        intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
+                        intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+                        try {
+                            startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
+                        } catch (ActivityNotFoundException e) {
+                            pendingSpeechCallback = null;
+                            final String js = "if (typeof window.onSpeechRecognitionError === 'function') { window.onSpeechRecognitionError('not_found'); }";
+                            webView.post(() -> webView.evaluateJavascript(js, null));
+                        }
                     });
-                    return;
+                } catch (Exception e) {
+                    pendingSpeechCallback = null;
                 }
-                pendingSpeechCallback = callbackFunc;
+            }
+
+            @JavascriptInterface
+            public void speakText(String text) {
                 runOnUiThread(() -> {
-                    Intent intent = new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
-                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
-                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "zh-CN");
-                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_PARTIAL_RESULTS, false);
-                    intent.putExtra(android.speech.RecognizerIntent.EXTRA_MAX_RESULTS, 1);
-                    startActivityForResult(intent, REQUEST_SPEECH_RECOGNITION);
+                    try {
+                        android.speech.tts.TextToSpeech tts = new android.speech.tts.TextToSpeech(MainActivity.this, status -> {
+                            if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                                tts.setLanguage(Locale.CHINA);
+                                tts.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "tts_utterance_id");
+                            }
+                        });
+                    } catch (Exception e) {
+                        // TTS not available
+                    }
                 });
             }
         }, "AndroidPermission");

@@ -685,24 +685,29 @@ export default function App() {
   // ── Voice input ──────────────────────────────────────────────────────────
   const startRecording = () => {
     // 优先使用 Android 原生语音识别（Android WebView 不支持 Web Speech API）
-    if (window.AndroidPermission) {
-      // 设置全局回调函数
-      window.onSpeechRecognitionResult = (transcript) => {
+    if (window.AndroidPermission && window.AndroidPermission.startSpeechRecognition) {
+      try {
+        // 设置全局回调函数
+        window.onSpeechRecognitionResult = (transcript) => {
+          setIsRecording(false);
+          if (transcript && transcript.trim()) {
+            const finalTranscript = transcript.trim();
+            setInput("");
+            setMessages(prev => [...prev, { role: "user", content: finalTranscript }]);
+            callTutor(finalTranscript, apiHistory, true);
+          }
+        };
+        window.onSpeechRecognitionError = (error) => {
+          setIsRecording(false);
+          console.log("Speech recognition error:", error);
+        };
+        // 调用 Android 原生语音识别
+        window.AndroidPermission.startSpeechRecognition("onSpeechRecognitionResult");
+        setIsRecording(true);
+      } catch (e) {
+        console.error("Speech recognition error:", e);
         setIsRecording(false);
-        if (transcript && transcript.trim()) {
-          const finalTranscript = transcript.trim();
-          setInput("");
-          setMessages(prev => [...prev, { role: "user", content: finalTranscript }]);
-          callTutor(finalTranscript, apiHistory, true);
-        }
-      };
-      window.onSpeechRecognitionError = (error) => {
-        setIsRecording(false);
-        console.log("Speech recognition error:", error);
-      };
-      // 调用 Android 原生语音识别
-      window.AndroidPermission.startSpeechRecognition("onSpeechRecognitionResult");
-      setIsRecording(true);
+      }
       return;
     }
 
@@ -748,6 +753,19 @@ export default function App() {
 
   // ── Voice output (TTS) ───────────────────────────────────────────────────
   const speakText = (text) => {
+    // 优先使用 Android 原生 TTS
+    if (window.AndroidPermission && window.AndroidPermission.speakText) {
+      try {
+        window.AndroidPermission.speakText(text);
+        setIsSpeaking(true);
+        // 简单估计播放时长，2秒后自动结束
+        setTimeout(() => setIsSpeaking(false), Math.max(2000, text.length * 120));
+      } catch (e) {
+        console.error("Native TTS error:", e);
+      }
+      return;
+    }
+    // 降级到 Web Speech Synthesis
     if (!synthRef.current || !voiceEnabled) return;
     synthRef.current.cancel();
     const utter = new SpeechSynthesisUtterance(text);
@@ -764,6 +782,9 @@ export default function App() {
   };
 
   const stopSpeaking = () => {
+    if (window.AndroidPermission && window.AndroidPermission.speakText) {
+      try { window.AndroidPermission.speakText(""); } catch (e) {}
+    }
     synthRef.current?.cancel();
     setIsSpeaking(false);
   };
@@ -1309,6 +1330,31 @@ export default function App() {
             {loading ? <span style={{ animation: "spin 1s linear infinite", display: "inline-block", fontSize: 16 }}>⟳</span> : "↑"}
           </button>
         </div>
+        {/* 按住说话按钮 — 语音模式下显示 */}
+        {voiceSupported && voiceEnabled && !isRecording && (
+          <div style={{ textAlign: "center", marginTop: 8 }}>
+            <button
+              onTouchStart={e => { e.preventDefault(); startRecording(); }}
+              onTouchEnd={e => { e.preventDefault(); stopRecording(); }}
+              onMouseDown={startRecording}
+              onMouseUp={stopRecording}
+              onMouseLeave={isRecording ? stopRecording : null}
+              disabled={loading}
+              style={{
+                width: "100%", height: 52, borderRadius: 26,
+                background: `linear-gradient(135deg, ${T.accent}22, ${T.accentDim}22)`,
+                border: `2px solid ${T.accent}66`,
+                color: T.accent, fontSize: 16, fontWeight: 600, fontFamily: "inherit",
+                cursor: loading ? "not-allowed" : "pointer",
+                letterSpacing: 2,
+                transition: "all 0.2s",
+                boxShadow: `0 0 20px ${T.accentGlow}`,
+              }}
+            >
+              🎙 按住说话
+            </button>
+          </div>
+        )}
         <div style={{ fontSize: 11, color: T.textMuted, marginTop: 6, textAlign: "center" }}>
           {mastery < 80
             ? `💡 勇敢说出你的想法——答错了也没关系，错误是最好的老师 · 掌握率 ${mastery}%`
