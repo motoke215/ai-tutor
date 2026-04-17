@@ -1309,36 +1309,32 @@ export default function App() {
               touchAction: "none",
               userSelect: "none",
               WebkitUserSelect: "none",
-              msUserSelect: "none",
             }}
-            ref={el => {
-              // Use pointer events so touch and mouse are unified
-              if (el) {
-                el.onpointerdown = (e) => {
-                  if (loading) return;
-                  e.preventDefault();
-                  el.setPointerCapture(e.pointerId);
-                  startRecording();
-                };
-                el.onpointerup = (e) => {
-                  if (isRecording) {
-                    e.preventDefault();
-                    stopRecording();
-                  }
-                };
-                el.onpointercancel = (e) => {
-                  if (isRecording) {
-                    e.preventDefault();
-                    stopRecording();
-                  }
-                };
-                el.onpointerleave = (e) => {
-                  if (isRecording) {
-                    e.preventDefault();
-                    stopRecording();
-                  }
-                };
-              }
+            onTouchStart={e => {
+              e.stopPropagation();
+              e.preventDefault();
+              if (!loading) startRecording();
+            }}
+            onTouchEnd={e => {
+              e.stopPropagation();
+              e.preventDefault();
+              if (isRecording) stopRecording();
+            }}
+            onTouchCancel={e => {
+              e.stopPropagation();
+              e.preventDefault();
+              if (isRecording) stopRecording();
+            }}
+            onMouseDown={e => {
+              e.preventDefault();
+              if (!loading) startRecording();
+            }}
+            onMouseUp={e => {
+              e.preventDefault();
+              if (isRecording) stopRecording();
+            }}
+            onMouseLeave={e => {
+              if (isRecording) { e.preventDefault(); stopRecording(); }
             }}
           >
             <div
