@@ -1,22 +1,29 @@
 package com.aitutor.app;
 
 import android.annotation.SuppressLint;
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.webkit.PermissionRequest;
 import android.view.WindowManager;
 import android.graphics.Color;
 import android.os.Build;
-import android.view.View;
 import android.view.Window;
+import android.widget.Toast;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 public class MainActivity extends AppCompatActivity {
     private WebView webView;
+    private static final int REQUEST_RECORD_AUDIO = 1001;
+    private PermissionRequest pendingPermissionRequest = null;
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -42,10 +49,8 @@ public class MainActivity extends AppCompatActivity {
         settings.setAllowContentAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        // Enable file access for ES modules
         settings.setAllowFileAccessFromFileURLs(true);
         settings.setAllowUniversalAccessFromFileURLs(true);
-        // Allow mixed content for API calls
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         }
@@ -53,7 +58,6 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                // Keep all navigation inside WebView
                 return false;
             }
         });
@@ -61,12 +65,58 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
-                // Grant microphone & camera permissions for speech recognition
+                String[] resources = request.getResources();
+                for (String resource : resources) {
+                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
+                        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                                != PackageManager.PERMISSION_GRANTED) {
+                            pendingPermissionRequest = request;
+                            ActivityCompat.requestPermissions(MainActivity.this,
+                                    new String[]{Manifest.permission.RECORD_AUDIO},
+                                    REQUEST_RECORD_AUDIO);
+                            return;
+                        }
+                    }
+                }
                 request.grant(request.getResources());
             }
         });
 
+        // JS interface for requesting audio permission
+        webView.addJavascriptInterface(new Object() {
+            @JavascriptInterface
+            public void requestAudioPermission() {
+                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    runOnUiThread(() -> {
+                        pendingPermissionRequest = null;
+                        ActivityCompat.requestPermissions(MainActivity.this,
+                                new String[]{Manifest.permission.RECORD_AUDIO},
+                                REQUEST_RECORD_AUDIO);
+                    });
+                }
+            }
+        }, "AndroidPermission");
+
         webView.loadUrl("file:///android_asset/index.html");
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_RECORD_AUDIO) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                // Permission granted
+            } else {
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "需要麦克风权限才能使用语音功能", Toast.LENGTH_LONG).show();
+                });
+            }
+            if (pendingPermissionRequest != null) {
+                pendingPermissionRequest.grant(pendingPermissionRequest.getResources());
+                pendingPermissionRequest = null;
+            }
+        }
     }
 
     @Override

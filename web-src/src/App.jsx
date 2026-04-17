@@ -670,6 +670,11 @@ export default function App() {
 
   // ── Voice input ──────────────────────────────────────────────────────────
   const startRecording = () => {
+    // 在 Android 上请求麦克风权限
+    if (window.AndroidPermission) {
+      window.AndroidPermission.requestAudioPermission();
+    }
+
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return;
     const rec = new SR();
